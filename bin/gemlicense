@@ -1,0 +1,73 @@
+#!/usr/bin/env ruby
+# encoding: UTF-8
+
+class GemInfo
+  LICENSE_MAPPING = {
+    %r(MIT License|Permission is hereby granted, free of charge, to any person)i    => "MIT License",
+    %r(MIT Licence|http://www.opensource.org/licenses/mit-license.html)i            => "MIT License",
+    %r(Licensed under the (Apache License, Version [\d\.]+))i                       => lambda { |m| m[1] },
+    %r(Ruby-specific license|Ruby License|http://www.ruby-lang.org/en/LICENSE.txt)i => "Ruby License",
+    %r(under the same terms as Ruby|Ruby's License)i                                => "Ruby License",
+    %r(Redistributions of source code must retain the above copyright notice)i      => "BSD License",
+    %r(GNU GENERAL PUBLIC LICENSE Version 3)i                                       => "GPL v3",
+    %r(GNU General Public License)i                                                 => "GPL",
+    %r(http://www.gnu.org/licenses/lgpl-2.1.txt)i                                   => "LGPL v2.1",
+    %r(http://www.gnu.org/licenses/lgpl-3.0.txt)i                                   => "LGPL v3.0",
+    %r(\WGPL\W)                                                                     => "GPL",
+    %r(GPL version 2)i                                                              => "GPL v2",
+    %r(LGPL)i                                                                       => "LGPL"
+    }
+
+  attr_reader :name, :version, :full_name
+
+  def initialize(name, version)
+    @name, @version = name, version
+    @full_name = "#{name}-#{version}"
+  end
+
+  def detect_licenses
+    licenses = find_license("*license*", "*Licence*", "*LEGAL*", "*COPYING*", "*readme*")
+    licenses += find_license("lib/**/*.rb") if licenses.empty?
+    licenses.flatten.compact.sort.uniq
+  end
+
+  private
+  def find_license(*patterns)
+    find_files(*patterns).map do |license_path|
+      content = File.read(license_path)
+      content = content.force_encoding("iso8859-1") if content.respond_to?(:force_encoding)
+      content = content.gsub(/[\r\n]+/, " ").gsub(/\s+/, " ")
+      LICENSE_MAPPING.map do |rule, name|
+        if m = rule.match(content)
+          name.respond_to?(:call) ? name.call(m) : name
+        end
+      end
+    end.flatten.compact.sort.uniq
+  end
+
+  def find_files(*patterns)
+    self.class.gem_paths.map do |path|
+      gem_path = File.join(path, "gems", full_name)
+      next unless File.exists?(gem_path)
+
+      patterns.map do |pattern|
+        Dir.glob(File.join(gem_path, pattern), File::FNM_CASEFOLD)
+      end
+    end.compact.flatten
+  end
+
+  def self.gem_paths
+    @@gem_paths ||= ENV["GEM_PATH"].split(File::PATH_SEPARATOR)
+  end
+end
+
+gems = `bundle list`.split(/[\r\n]+/).map do |line|
+  next GemInfo.new($1, $2) if (line =~ /\*\s+([^ ]+)\s+\((.+)\)/)
+end.compact
+
+name_max_size = gems.map {|g| g.full_name.size }.max
+gems.each do |gem|
+  licenses = gem.detect_licenses
+  printf("%-#{name_max_size}s  %s\n", gem.full_name, licenses.join(", "))
+end
+
